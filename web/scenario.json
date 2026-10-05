@@ -1,0 +1,31 @@
+{
+ "service": "airport-ops-intelligence",
+ "run": "demo-1",
+ "tokens": {"manager": "hub-manager-demo", "controller": "hub-controller-demo", "viewer": "hub-viewer-demo"},
+ "steps": [
+  {"title": "Load a hub airport at 16:00", "say": "An invented airport: 28 gates on two piers and a day of 292 aircraft turns, with the passengers who connect between them. It is 16:00. A model is trained on 72 past days to predict how late each aircraft still in the air will be, and tested on 18 later days.",
+   "calls": [{"key": "load", "as": "manager", "method": "POST", "path": "/v1/airport:load", "body": {"seed": 17}}, {"key": "train", "as": "manager", "method": "POST", "path": "/v1/models/delay:train"}]},
+  {"title": "The airport on an ordinary evening", "say": "Every gate as a row, the next six hours left to right. Each bar is an aircraft at its gate, drawn from its predicted arrival. With no disruption announced, almost nobody waits for a gate.",
+   "calls": [{"key": "ops", "as": "viewer", "method": "GET", "path": "/v1/airports/{{load.result.airport_id}}/operations?window=6h"}]},
+  {"title": "One flight posts a delay", "say": "Houston posts a 75-minute delay for a flight that has not left yet. The estimate moves at once. The same update sent again with an older timestamp is ignored.",
+   "calls": [{"key": "upd", "as": "controller", "method": "POST", "path": "/v1/events/flight-update", "body": {"flight_no": "RB351", "observed_at": "2026-10-05T16:02:00Z", "origin_delay_min": 75}},
+             {"key": "stale", "as": "controller", "method": "POST", "path": "/v1/events/flight-update", "body": {"flight_no": "RB351", "observed_at": "2026-10-05T15:40:00Z", "origin_delay_min": 10}}]},
+  {"title": "A thunderstorm closes a runway", "say": "The forecast: 16:00 to 17:30, landings cut from 46 to 18 an hour and pushbacks to 12 an hour. Every estimate is redone. Aircraft that cannot leave keep their gates, so arrivals start to queue for one.",
+   "calls": [{"key": "storm", "as": "controller", "method": "POST", "path": "/v1/disruptions", "body": {"type": "thunderstorm", "severity": 4, "starts_at": "2026-10-05T16:00:00Z", "ends_at": "2026-10-05T17:30:00Z", "arrival_rate_per_hour": 18, "departure_rate_per_hour": 12}},
+             {"key": "ops2", "as": "viewer", "method": "GET", "path": "/v1/airports/{{load.result.airport_id}}/operations?window=6h"}]},
+  {"title": "Who will miss their connection?", "say": "For the most delayed inbound flight: each onward connection, the minutes to spare, and the chance it is missed. The chance comes from how wrong the delay model was on its test days, not from a rule of thumb.",
+   "calls": [{"key": "risk", "as": "viewer", "method": "GET", "path": "/v1/flights/{{storm.most_delayed.0.flight_id}}/connection-risk"}]},
+  {"title": "Propose a new plan; a manager approves it", "say": "The optimiser tries new gates for aircraft still to arrive and a rule for holding departures up to 15 minutes for connecting passengers. Each candidate is played through six sampled versions of the evening. It is only a proposal: the controller who asked for it cannot publish it.",
+   "calls": [{"key": "plan", "as": "controller", "method": "POST", "path": "/v1/optimizations/gates", "body": {"hold_minutes": 15}},
+             {"key": "deny", "as": "controller", "method": "POST", "path": "/v1/plans/{{plan.result.plan_id}}/approve", "expect_error": true},
+             {"key": "ok", "as": "manager", "method": "POST", "path": "/v1/plans/{{plan.result.plan_id}}/approve"}]},
+  {"title": "Lock one flight to a gate and plan around it", "say": "RB340, a wide-body from abroad, must use gate B1. The optimiser keeps that fixed and rearranges the rest.",
+   "calls": [{"key": "plan2", "as": "controller", "method": "POST", "path": "/v1/optimizations/gates", "body": {"hold_minutes": 15, "locks": [{"flight_no": "RB340", "gate": "B1"}]}},
+             {"key": "ok2", "as": "manager", "method": "POST", "path": "/v1/plans/{{plan2.result.plan_id}}/approve"},
+             {"key": "ops3", "as": "viewer", "method": "GET", "path": "/v1/airports/{{load.result.airport_id}}/operations?window=6h"}]},
+  {"title": "Replay the evening as it really went", "say": "The simulator knows what actually happened, including that the storm ran 25 minutes past its forecast. The same evening is replayed under the scheduled gates, the obvious rule (first free gate), and both plans.",
+   "calls": [{"key": "replay", "as": "controller", "method": "POST", "path": "/v1/scenarios", "body": {"plan_ids": ["{{plan.result.plan_id}}", "{{plan2.result.plan_id}}"]}}]},
+  {"title": "The audit trail", "say": "Who loaded the airport, who announced the storm, who proposed each plan and who approved it: recorded in a log that cannot be edited.",
+   "calls": [{"key": "audit", "as": "manager", "method": "GET", "path": "/v1/audit?limit=10"}]}
+ ]
+}
